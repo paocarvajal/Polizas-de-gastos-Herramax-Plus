@@ -4,6 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Póliza de Gastos — HerraMax Plus</title>
+  
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  
   <style>
     /* ── Base ── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -490,11 +496,31 @@
 </head>
 <body>
 
+<!-- ═══ FULLSCREEN LOGIN OVERLAY ═══ -->
+<div id="login-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; transition:opacity 0.3s; backdrop-filter:blur(5px);">
+    <div style="background:#fff; padding:40px; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.5); max-width:400px; width:90%;">
+        <div style="background:var(--brand); display:inline-flex; padding:10px; border-radius:8px; margin-bottom:20px;">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="url(#g1)"/><path d="M8 16h16M16 8v16" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><defs><linearGradient id="g1" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#FF8C00"/><stop offset="1" stop-color="#e65100"/></linearGradient></defs></svg>
+        </div>
+        <h2 style="margin-bottom:10px; color:var(--brand); font-weight:700;">Acceso Restringido</h2>
+        <p style="color:var(--muted); margin-bottom:30px; font-size:13px;">Por favor inicia sesión con tu cuenta de Google para acceder a las Pólizas de Gastos de HerraMax Plus.</p>
+        <button class="btn btn-primary" onclick="login()" style="width:100%; display:flex; justify-content:center; align-items:center; gap:10px; font-size:14px; padding:12px;">
+            <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" style="width:18px;"> Iniciar Sesión con Google
+        </button>
+    </div>
+</div>
+
 <!-- ── Toolbar ── -->
-<div class="toolbar">
-  <button class="btn btn-success"   onclick="guardarPoliza()">💾 Guardar póliza</button>
-  <button class="btn btn-secondary" onclick="limpiarFormulario()">🗑 Nueva póliza</button>
-  <button class="btn btn-primary"   onclick="window.print()">🖨 Imprimir / PDF</button>
+<div class="toolbar" style="display:flex; justify-content:space-between; align-items:center;">
+  <div id="auth-ui" style="display:flex; align-items:center; gap:10px; font-size:12px; color:var(--muted); font-weight:600;">
+    <span id="user-email"></span>
+    <button class="btn btn-secondary" style="padding:4px 10px; font-size:11px;" onclick="logout()" id="btn-logout" style="display:none;">Salir</button>
+  </div>
+  <div style="display:flex; gap:10px;">
+    <button class="btn btn-success"   onclick="guardarPoliza()">💾 Guardar en la Nube</button>
+    <button class="btn btn-secondary" onclick="limpiarFormulario()">🗑 Nueva póliza</button>
+    <button class="btn btn-primary"   onclick="window.print()">🖨 Imprimir / PDF</button>
+  </div>
 </div>
 
 <!-- ══════════════════════════════════════════
@@ -743,8 +769,7 @@
 ══════════════════════════════════════════ -->
 <div id="historial-panel">
   <div class="hist-header">
-    <span>📋 Historial de pólizas guardadas</span>
-    <button class="btn btn-danger" onclick="limpiarHistorial()" style="font-size:11px;padding:4px 12px;">Limpiar historial</button>
+    <span>📋 Historial de pólizas guardadas (Nube)</span>
   </div>
   <div id="hist-contenido">
     <div class="hist-empty">No hay pólizas guardadas aún.</div>
@@ -753,20 +778,58 @@
 
 <script>
 /* ══════════════════════════════════════════
-   Inicialización
+   FIREBASE INIT & AUTH
+══════════════════════════════════════════ */
+const firebaseConfig = {
+  apiKey: "AIzaSyAa57ppjWFUcEdniw9WScABHssyACP3x3k",
+  authDomain: "compras-herramax.firebaseapp.com",
+  projectId: "compras-herramax",
+  storageBucket: "compras-herramax.firebasestorage.app",
+  messagingSenderId: "558573642669",
+  appId: "1:558573642669:web:b73b4cd1ef5917d416b724"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+let currentUser = null;
+
+auth.onAuthStateChanged(user => {
+  currentUser = user;
+  const overlay = document.getElementById('login-overlay');
+  const emailSpan = document.getElementById('user-email');
+  const btnLogout = document.getElementById('btn-logout');
+  
+  if (user) {
+    if(overlay) overlay.style.display = 'none';
+    emailSpan.textContent = user.email;
+    btnLogout.style.display = 'inline-block';
+    
+    // Una vez logueado, inicializamos los datos de la nube
+    generarNumPoliza();
+    renderHistorial();
+  } else {
+    if(overlay) overlay.style.display = 'flex';
+    emailSpan.textContent = '';
+    btnLogout.style.display = 'none';
+  }
+});
+
+function login() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider).catch(err => alert('Error al iniciar sesión: ' + err.message));
+}
+function logout() { auth.signOut(); }
+
+/* ══════════════════════════════════════════
+   Inicialización local
 ══════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
   setFechaHoy();
-  generarNumPoliza();
   agregarFila();
   agregarFila();
-  renderHistorial();
   actualizarPieFecha();
 });
 
-/* ══════════════════════════════════════════
-   Auto-fill cuenta contable por tipo de gasto
-══════════════════════════════════════════ */
 const CUENTA_POR_TIPO = {
   'Viáticos y hospedaje':       '601.49.01 — Gastos de viaje y Viáticos',
   'Alimentación':               '601.83.01 — Gastos no Deducibles',
@@ -785,11 +848,9 @@ const CUENTA_POR_TIPO = {
   'Otro (sin factura)':         '601.83.01 — Gastos no Deducibles',
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('tipo-gasto').addEventListener('change', function() {
-    const cuenta = CUENTA_POR_TIPO[this.value];
-    if (cuenta) document.getElementById('cuenta').value = cuenta;
-  });
+document.getElementById('tipo-gasto').addEventListener('change', function() {
+  const cuenta = CUENTA_POR_TIPO[this.value];
+  if (cuenta) document.getElementById('cuenta').value = cuenta;
 });
 
 function setFechaHoy() {
@@ -797,14 +858,19 @@ function setFechaHoy() {
   document.getElementById('fecha').value = hoy;
 }
 
-function generarNumPoliza() {
-  let seq = localStorage.getItem('polizas_seq');
-  if (!seq) {
-    const polizas = JSON.parse(localStorage.getItem('polizas_herramax') || '[]');
-    seq = polizas.length;
+async function generarNumPoliza() {
+  if (!currentUser) return;
+  try {
+    const snap = await db.collection('users').doc(currentUser.uid).collection('polizas')
+                         .orderBy('numInt', 'desc').limit(1).get();
+    let nextNum = 1;
+    if (!snap.empty) {
+      nextNum = snap.docs[0].data().numInt + 1;
+    }
+    document.getElementById('num-poliza').value = String(nextNum).padStart(4, '0');
+  } catch (e) {
+    console.error("Error al generar num de póliza:", e);
   }
-  seq = parseInt(seq, 10) + 1;
-  document.getElementById('num-poliza').value = String(seq).padStart(4, '0');
 }
 
 function actualizarPieFecha() {
@@ -916,9 +982,11 @@ function capitalizarPrimera(str) {
 }
 
 /* ══════════════════════════════════════════
-   Guardar póliza en localStorage
+   Guardar póliza en FIRESTORE
 ══════════════════════════════════════════ */
-function guardarPoliza() {
+async function guardarPoliza() {
+  if (!currentUser) { alert('Inicia sesión primero.'); return; }
+  
   const num = document.getElementById('num-poliza').value.trim();
   if (!num) { alert('Ingresa el número de póliza.'); return; }
   if (!document.getElementById('fecha').value) { alert('Selecciona la fecha.'); return; }
@@ -928,92 +996,173 @@ function guardarPoliza() {
   document.querySelectorAll('#partidas-body tr').forEach(tr => {
     const inputs = tr.querySelectorAll('input');
     if (inputs.length >= 5) {
-      partidas.push({
-        desc:   inputs[0].value,
-        prov:   inputs[1].value,
-        fecha:  inputs[2].value,
-        qty:    inputs[3].value,
-        price:  inputs[4].value,
-        amount: inputs[5] ? inputs[5].value : ''
-      });
+      if (inputs[0].value.trim() !== '') {
+        partidas.push({
+          desc:   inputs[0].value,
+          prov:   inputs[1].value,
+          fecha:  inputs[2].value,
+          qty:    inputs[3].value,
+          price:  inputs[4].value,
+          amount: inputs[5] ? inputs[5].value : ''
+        });
+      }
     }
   });
 
+  if (partidas.length === 0) {
+      if(!confirm('No has agregado partidas con descripción. ¿Deseas guardar de todos modos?')) return;
+  }
+
+  const numInt = parseInt(num, 10) || Date.now();
+  
   const poliza = {
-    id:          Date.now(),
     num,
+    numInt,
     fecha:       document.getElementById('fecha').value,
     departamento:document.getElementById('departamento').value,
     responsable: document.getElementById('responsable').value,
+    cargo:       document.getElementById('cargo').value,
     tipo:        document.getElementById('tipo-gasto').value,
     formaPago:   document.getElementById('forma-pago').value,
+    cuenta:      document.getElementById('cuenta').value,
+    centroCosto: document.getElementById('centro-costo').value,
     concepto:    document.getElementById('concepto').value,
+    justificacion: document.getElementById('justificacion').value,
+    observaciones: document.getElementById('observaciones').value,
+    firmaElaboro:  document.getElementById('firma-elaboro').value,
+    firmaReviso:   document.getElementById('firma-reviso').value,
+    firmaAutorizo: document.getElementById('firma-autorizo').value,
     total:       document.getElementById('t-total').textContent,
     partidas,
-    guardadoEn:  new Date().toLocaleString('es-MX')
+    guardadoEn:  new Date().toLocaleString('es-MX'),
+    timestamp:   firebase.firestore.FieldValue.serverTimestamp()
   };
 
-  const polizas = JSON.parse(localStorage.getItem('polizas_herramax') || '[]');
-  polizas.unshift(poliza);
-  localStorage.setItem('polizas_herramax', JSON.stringify(polizas));
+  const btn = document.querySelector('.btn-success');
+  const btnOriginal = btn.innerHTML;
+  btn.innerHTML = '⏳ Guardando...';
+  btn.disabled = true;
 
-  const numInt = parseInt(num, 10);
-  if (!isNaN(numInt)) {
-    localStorage.setItem('polizas_seq', Math.max(numInt, parseInt(localStorage.getItem('polizas_seq') || '0', 10)));
+  try {
+    await db.collection('users').doc(currentUser.uid).collection('polizas').add(poliza);
+    alert('✅ Póliza ' + num + ' guardada correctamente en la nube.');
+    renderHistorial();
+  } catch (err) {
+    console.error(err);
+    alert('Error al guardar en la nube: ' + err.message);
+  } finally {
+    btn.innerHTML = btnOriginal;
+    btn.disabled = false;
   }
-
-  renderHistorial();
-  alert('✅ Póliza ' + num + ' guardada correctamente.');
 }
 
 /* ══════════════════════════════════════════
-   Historial
+   Historial (FIRESTORE)
 ══════════════════════════════════════════ */
-function renderHistorial() {
-  const polizas = JSON.parse(localStorage.getItem('polizas_herramax') || '[]');
+async function renderHistorial() {
+  if (!currentUser) return;
+  
   const cont = document.getElementById('hist-contenido');
+  cont.innerHTML = '<div class="hist-empty">Cargando pólizas de la nube...</div>';
 
-  if (polizas.length === 0) {
-    cont.innerHTML = '<div class="hist-empty">No hay pólizas guardadas aún.</div>';
-    return;
+  try {
+    const snap = await db.collection('users').doc(currentUser.uid).collection('polizas')
+                         .orderBy('timestamp', 'desc').limit(50).get();
+    
+    if (snap.empty) {
+      cont.innerHTML = '<div class="hist-empty">No hay pólizas guardadas aún.</div>';
+      return;
+    }
+
+    let html = `<table class="hist-table">
+      <thead><tr>
+        <th>Póliza</th><th>Fecha</th><th>Departamento</th>
+        <th>Responsable</th><th>Tipo de gasto</th><th>Total</th><th>Guardado</th><th></th>
+      </tr></thead><tbody>`;
+
+    snap.forEach(doc => {
+      const p = doc.data();
+      html += `<tr>
+        <td><strong>${p.num}</strong></td>
+        <td>${p.fecha}</td>
+        <td>${p.departamento || '—'}</td>
+        <td>${p.responsable}</td>
+        <td>${p.tipo || '—'}</td>
+        <td><strong>${p.total}</strong></td>
+        <td style="font-size:11px;color:#90a4ae;">${p.guardadoEn || 'Reciente'}</td>
+        <td style="display:flex; gap:6px;">
+            <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;background:var(--brand)"
+              onclick="cargarPoliza('${doc.id}')">Abrir</button>
+            <button class="btn btn-danger" style="font-size:11px;padding:3px 8px;"
+              onclick="eliminarDelHistorial('${doc.id}')">✕</button>
+        </td>
+      </tr>`;
+    });
+
+    html += '</tbody></table>';
+    cont.innerHTML = html;
+  } catch(e) {
+    cont.innerHTML = '<div class="hist-empty" style="color:var(--accent)">Error al cargar historial.</div>';
   }
-
-  let html = `<table class="hist-table">
-    <thead><tr>
-      <th>Póliza</th><th>Fecha</th><th>Departamento</th>
-      <th>Responsable</th><th>Tipo de gasto</th><th>Total</th><th>Guardado</th><th></th>
-    </tr></thead><tbody>`;
-
-  polizas.forEach(p => {
-    html += `<tr>
-      <td><strong>${p.num}</strong></td>
-      <td>${p.fecha}</td>
-      <td>${p.departamento || '—'}</td>
-      <td>${p.responsable}</td>
-      <td>${p.tipo || '—'}</td>
-      <td><strong>${p.total}</strong></td>
-      <td style="font-size:11px;color:#90a4ae;">${p.guardadoEn}</td>
-      <td><button class="btn btn-danger" style="font-size:11px;padding:3px 8px;"
-          onclick="eliminarDelHistorial(${p.id})">✕</button></td>
-    </tr>`;
-  });
-
-  html += '</tbody></table>';
-  cont.innerHTML = html;
 }
 
-function eliminarDelHistorial(id) {
-  if (!confirm('¿Eliminar esta póliza del historial?')) return;
-  let polizas = JSON.parse(localStorage.getItem('polizas_herramax') || '[]');
-  polizas = polizas.filter(p => p.id !== id);
-  localStorage.setItem('polizas_herramax', JSON.stringify(polizas));
-  renderHistorial();
+async function cargarPoliza(docId) {
+    if (!currentUser) return;
+    try {
+        const doc = await db.collection('users').doc(currentUser.uid).collection('polizas').doc(docId).get();
+        if(doc.exists) {
+            const p = doc.data();
+            document.getElementById('num-poliza').value = p.num || '';
+            document.getElementById('fecha').value = p.fecha || '';
+            document.getElementById('departamento').value = p.departamento || '';
+            document.getElementById('responsable').value = p.responsable || '';
+            document.getElementById('cargo').value = p.cargo || '';
+            document.getElementById('tipo-gasto').value = p.tipo || '';
+            document.getElementById('forma-pago').value = p.formaPago || '';
+            document.getElementById('cuenta').value = p.cuenta || '';
+            document.getElementById('centro-costo').value = p.centroCosto || '';
+            document.getElementById('concepto').value = p.concepto || '';
+            document.getElementById('justificacion').value = p.justificacion || '';
+            document.getElementById('observaciones').value = p.observaciones || '';
+            document.getElementById('firma-elaboro').value = p.firmaElaboro || '';
+            document.getElementById('firma-reviso').value = p.firmaReviso || '';
+            document.getElementById('firma-autorizo').value = p.firmaAutorizo || '';
+
+            // Limpiar y cargar partidas
+            document.getElementById('partidas-body').innerHTML = '';
+            filaCount = 0;
+            if (p.partidas && p.partidas.length > 0) {
+                p.partidas.forEach(part => {
+                    agregarFila();
+                    const tr = document.getElementById('fila-' + filaCount);
+                    const inputs = tr.querySelectorAll('input');
+                    inputs[0].value = part.desc || '';
+                    inputs[1].value = part.prov || '';
+                    inputs[2].value = part.fecha || '';
+                    inputs[3].value = part.qty || '1';
+                    inputs[4].value = part.price || '';
+                    inputs[5].value = part.amount || '';
+                });
+            } else {
+                agregarFila();
+                agregarFila();
+            }
+            calcularTotales();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    } catch(e) {
+        alert('Error al cargar la póliza');
+    }
 }
 
-function limpiarHistorial() {
-  if (!confirm('¿Eliminar TODO el historial? Esta acción no se puede deshacer.')) return;
-  localStorage.removeItem('polizas_herramax');
-  renderHistorial();
+async function eliminarDelHistorial(docId) {
+  if (!confirm('¿Eliminar esta póliza de la nube?')) return;
+  try {
+    await db.collection('users').doc(currentUser.uid).collection('polizas').doc(docId).delete();
+    renderHistorial();
+  } catch(e) {
+    alert('Error al eliminar');
+  }
 }
 
 /* ══════════════════════════════════════════
